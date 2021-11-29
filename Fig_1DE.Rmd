@@ -1,0 +1,240 @@
+<br>
+Opening packages
+```{r packages}
+rm(list=ls())
+setwd('~/Desktop/Projects/Project5_HV_Abx/20200513_Fig1_CP_nonorm')
+library(ggplot2)
+library(dplyr)
+```
+<br>
+
+**Load data**
+Input file: OTU based *.tax.summary file generated in mothur
+```{r data}
+table1 <- read.table('merged_Oh_output3_mostlySC.txt', sep="\t", header=T, stringsAsFactors=F)
+table <- table1
+colnames(table) <- gsub('(M\\w\\w\\d\\d\\d\\d).*', '\\1', colnames(table), ignore.case=T)
+table[is.na(table)] <- 0
+```
+
+**File reading and manipulation**
+```{r table opening and labeling fixing}
+table <- data.frame(table, stringsAsFactors=F)
+
+table2 <- table[, 2:ncol(table)]
+rownames(table2) <- table$taxa
+
+table2 <- table2[,as.numeric(table2[1,])>50000]
+table <- table2[rownames(table2)!='Totals',]
+
+metadata <- read.table(file="meta_data.txt", sep="\t", header=T, stringsAsFactors=F)
+metadata2 <- metadata[intersect(grep("Ac|Ra|Vf", metadata$Site), grep("HV", metadata$Treatment, invert=T)),]
+
+sel_list <- metadata2$Sample
+```
+
+**Calling Oh. et al. paper**
+```{r}
+HV_meta <- data.frame(read.csv(file="Ohetal_HVlong_meta.csv", sep=",", header=T, stringsAsFactors=F), stringsAsFactors=F)
+
+#Subjects to remove: HV08=1042, HV10=1044
+meta_new_HV <- data.frame(cbind(HV_meta$SAMPLE, gsub("(HV\\d*)_.*", "\\1", HV_meta$Designation), 
+                     HV_meta$Site.Symmetry, gsub("\\.", "/", HV_meta$Date.Collected)), stringsAsFactors=F)
+#meta_new_HV <- meta_new_HV[!(meta_new_HV$X1 %in% colnames(table_skin)),]
+meta_new_HV$Treatment <- "HV"
+colnames(meta_new_HV) <- colnames(metadata2)
+meta_new_HV <- meta_new_HV[grep("Ac|Ra|Vf", meta_new_HV$Site),]
+meta_new_HV <- meta_new_HV[meta_new_HV$Subject!="HV08" & meta_new_HV$Subject!="HV10",]
+meta_new_HV$Site <- gsub(":WGA", "", meta_new_HV$Site)
+sel_list2 <- meta_new_HV$Sample
+
+sel_list <- union(sel_list, sel_list2)
+sel_listzz <- setdiff(sel_list, c("MET0001", "MET0176", "MET0747",
+                                  "MET0174", "MET0175", "MET0320"))
+
+table_skin <- table[,colnames(table) %in% sel_list]
+metadata2 <- metadata2[metadata2$Sample %in% colnames(table_skin),]
+```
+<br>
+
+
+**Skin**
+```{r}
+#Splitting table
+bacterial_skin <- table_skin[grep("Bacteria;", rownames(table_skin)),]
+fungal_skin <- table_skin[grep("Eukaryota;Fungi;", rownames(table_skin)),]
+viral_skin <- table_skin[grep("Viruses;", rownames(table_skin)),]
+others_skin <- table_skin[grep("Bacteria;|Eukaryota;Fungi;|Viruses;", rownames(table_skin), invert=TRUE),]
+
+#Skin_bacteria
+bacterial_skin$species <- gsub("(Bacteria;[^;]*;[^;]*;[^;]*;[^;]*;[^;]*;[^;_]*_[^;_]*).*", "\\1", rownames(bacterial_skin))
+bacterial_skin <- data.frame(bacterial_skin %>% group_by(species) %>% summarise_all(list(sum)))
+rownames(bacterial_skin) <- bacterial_skin$species
+bacterial_skin$species <- NULL
+
+#Skin_Virus
+viral_skin$species <- gsub("(Viruses;[^;]*;[^;]*;[^;]*;[^;]*;[^;]*;[^;_]*_[^;_]*).*", "\\1", rownames(viral_skin))
+viral_skin$species <- gsub("(Viruses;.*_phage).*", "\\1", viral_skin$species)
+viral_skin <- data.frame(viral_skin %>% group_by(species) %>% summarise_all(list(sum)))
+rownames(viral_skin) <- viral_skin$species
+viral_skin$species <- NULL
+
+#Skin_fungi
+fungal_skin$species <- gsub("(Eukaryota;Fungi;[^;]*;[^;]*;[^;]*;[^;]*;[^;]*;[^;_]*_[^;_]*).*", "\\1", rownames(fungal_skin))
+fungal_skin <- data.frame(fungal_skin %>% group_by(species) %>% summarise_all(list(sum)))
+rownames(fungal_skin) <- fungal_skin$species
+fungal_skin$species <- NULL
+
+#others and merge
+skin_merged <- rbind(bacterial_skin, viral_skin, fungal_skin, colSums(others_skin[,]))
+rownames(skin_merged)[nrow(skin_merged)] <- "Eukaryota;Others"
+```
+
+**Function for converting table into ratio**
+```{r}
+ratio_table <- function(df){
+  return(data.frame(t(apply(df, 1, function(x){return(unlist(x/colSums(df)))})), stringsAsFactors=F))
+}
+
+table_skin2 <- ratio_table(skin_merged)
+bacterial_skin2 <- ratio_table(bacterial_skin)
+```
+
+
+**DPI calculation**
+```{r}
+metadata <- rbind(metadata2, meta_new_HV)
+metadata <- metadata[metadata$Sample %in% colnames(table_skin2),]
+
+DPI_calculator <- function(pcoa){
+  i<-2
+  DPI <- 0
+  DPI_Sum <- 0
+  while (i<=dim(pcoa)[1]){
+    if(pcoa$Trt_Sub[i]==pcoa$Trt_Sub[i-1]){
+      DPI_Sum <- DPI_Sum+(pcoa$Coll_date[i]-pcoa$Coll_date[i-1])
+      DPI <- append(DPI, DPI_Sum)
+      i<-i+1
+    } else {
+      DPI <- append(DPI, 0)
+      DPI_Sum <- 0
+      i<-i+1
+    }
+  }
+  pcoa <- cbind(pcoa, as.numeric(DPI)+1)
+  colnames(pcoa)[ncol(pcoa)] <- "DPI"
+  return(pcoa)
+}
+
+metadata$Coll_date <- as.Date(metadata$DateCollected, "%m/%d/%y")
+metadata22 <- subset(metadata, Site=="Vf-L" | Site=="Vf-R")
+metadata22$Trt_Sub <- paste(metadata22$Treatment, metadata22$Subject, sep="_")
+metadata22 <- metadata22 %>% arrange(Coll_date) %>% arrange(Trt_Sub)
+metadata22 <- metadata22[metadata22$Sample %in% colnames(table_skin2),]
+
+meta_data <- DPI_calculator(metadata22)
+
+D1_finder <- function(df){
+  df$D1_sample <- "NULL"
+  for (k in 1:nrow(df)){
+    if (df$DPI[k]==1){
+      df$D1_sample[k] <- df$Sample[k]
+    }
+    else {
+      df$D1_sample[k] <- df$D1_sample[k-1]
+    }
+  }
+  return(df)
+}
+
+meta_Ac <- D1_finder(meta_data)
+
+df_Ac2 <- table_skin2[,colnames(table_skin2) %in% meta_Ac$Sample]
+```
+
+**nonzero species at D0**
+```{r}
+library(pegas)
+thetayc_calculator <- function(df){
+  gop <- 0
+  jegopcha <- 0
+  for (i in 1:nrow(df)){
+    gop <- gop+(df[i,1]*df[i,2])
+    jegopcha <- jegopcha+((df[i,1]-df[i,2])^2)
+  }
+  thetayc <- 1-(gop/(jegopcha+gop))  
+  return(thetayc)
+}
+
+theta_matrix <-  function(table_skin_t){
+  theta_t <- NULL
+  testt <- NULL
+  for (j in 1:ncol(table_skin_t)){
+    theta <- NULL
+    for (i in 1:ncol(table_skin_t)){
+      theta <- append(theta, thetayc_calculator(cbind(table_skin_t[,j], table_skin_t[,i])))
+    }
+    theta_t <- rbind(theta_t, theta)
+  }
+  skin_Ac_theta <- data.frame(theta_t, stringsAsFactors=F)
+  colnames(skin_Ac_theta) <- colnames(table_skin_t)
+  rownames(skin_Ac_theta) <- colnames(table_skin_t)
+  a.dist <- as.dist(as(skin_Ac_theta, "matrix"))
+  return(a.dist)
+}
+
+library(vegan)
+#d.Ac <- theta_matrix(df_Ac2)
+d.Ac <- vegdist(t(df_Ac2), method='bray')
+dm.Ac <- data.frame(as.matrix(d.Ac), stringsAsFactors=F)
+
+pcoa_Ac <- cmdscale(d.Ac, k=(ncol(df_Ac2)-1), eig=T)
+pcoa_Ac_axis <- data.frame(pcoa_Ac$points, stringsAsFactors=F)
+
+pcoa_Ac_meta <- data.frame(rownames(pcoa_Ac_axis))
+pcoa_Ac_meta$sample <- rownames(pcoa_Ac_axis)
+pcoa_Ac_meta$Treatment <- sapply(pcoa_Ac_meta$sample, function(x){meta_Ac$Treatment[meta_Ac$Sample==x]})
+pcoa_Ac_meta$DPI <- sapply(pcoa_Ac_meta$sample, function(x){meta_Ac$DPI[meta_Ac$Sample==x]})
+pcoa_Ac_meta$Subject <- sapply(pcoa_Ac_meta$sample, function(x){meta_Ac$Subject[meta_Ac$Sample==x]})
+pcoa_Ac_meta$DPI <- ifelse(pcoa_Ac_meta$Treatment=='HV', 10, pcoa_Ac_meta$DPI)
+pcoa_Ac_meta$Subject2 <- ifelse(pcoa_Ac_meta$Treatment=='HV', 'HV', pcoa_Ac_meta$Subject)
+pcoa_Ac_meta <- pcoa_Ac_meta %>% arrange(DPI) %>% arrange(Subject2)
+
+HV_list <- pcoa_Ac_meta$sample[pcoa_Ac_meta$Treatment=='HV']
+pcoa_Ac_meta$mean_bray_to_HV <- sapply(pcoa_Ac_meta$sample, function(x){mean(as.numeric(dm.Ac[rownames(dm.Ac)==x, colnames(dm.Ac) %in% HV_list]))})
+
+pcoa_Ac_meta <- subset(pcoa_Ac_meta, Treatment!='HV')
+pcoa_Ac_meta$Treatment <- factor(pcoa_Ac_meta$Treatment, levels=c("Doxy_20mg", "Doxy_100mg", "Cepha_500mg", "TMP_SMX"))
+
+rect_table <- data.frame(cbind(c('Doxy_20mg', 'Doxy_100mg', 'Cepha_500mg', 'TMP_SMX'),
+                    c(56, 56, 14, 14)), stringsAsFactors=F)
+colnames(rect_table) <- c('Treatment', 'period')
+rect_table$Treatment <- factor(rect_table$Treatment,
+                               levels=c('Doxy_20mg', 'Doxy_100mg', 'Cepha_500mg', 'TMP_SMX','HV'))
+
+library(scales)
+library(RColorBrewer)
+pdf(file="Vf_mean_bray_inter_to_HV_allK.pdf", height=6, width=5, useDingbats=F)
+ggplot(pcoa_Ac_meta) +
+  geom_rect(data=rect_table, aes(xmin=0, xmax=as.numeric(period), ymin=-Inf, ymax=Inf), fill="black", alpha=0.05) +
+  geom_point(aes(x=DPI, y=mean_bray_to_HV, group=Subject, color=Treatment), alpha=1, size=1) + 
+  geom_line(aes(x=DPI, y=mean_bray_to_HV, group=Subject, color=Treatment), alpha=0.75) + 
+  scale_color_manual(values=c(brewer.pal(4, 'Set1')[c(3,1,4,2)])) +
+#  scale_color_manual(values=c(hue_pal()(13), 'grey', 'grey', 'grey', 'grey', 'grey', 'grey')) + 
+  facet_wrap(~Treatment, nrow=4) + ylim(c(0,1)) +
+  theme_bw()
+dev.off()
+
+xx <- pcoa_Ac_meta$disttoCM[pcoa_Ac_meta$DPI==1 & pcoa_Ac_meta$Treatment=="Doxy_100mg"]
+yy <- pcoa_Ac_meta$disttoCM[(pcoa_Ac_meta$DPI>48 & pcoa_Ac_meta$DPI<60)& pcoa_Ac_meta$Treatment=="Doxy_100mg"]
+yy <- pcoa_Ac_meta$disttoCM[(pcoa_Ac_meta$DPI>100 & pcoa_Ac_meta$DPI<180)& pcoa_Ac_meta$Treatment=="Doxy_100mg"]
+yy <- pcoa_Ac_meta$disttoCM[(pcoa_Ac_meta$DPI>200 & pcoa_Ac_meta$DPI<280)& pcoa_Ac_meta$Treatment=="Doxy_100mg"]
+
+xx <- pcoa_Ac_meta$disttoCM[pcoa_Ac_meta$DPI==1 & pcoa_Ac_meta$Treatment=="TMP_SMX"]
+yy <- pcoa_Ac_meta$disttoCM[(pcoa_Ac_meta$DPI>20 & pcoa_Ac_meta$DPI<30)& pcoa_Ac_meta$Treatment=="TMP_SMX"]
+yy <- pcoa_Ac_meta$disttoCM[(pcoa_Ac_meta$DPI>100 & pcoa_Ac_meta$DPI<180)& pcoa_Ac_meta$Treatment=="TMP_SMX"]
+yy <- pcoa_Ac_meta$disttoCM[(pcoa_Ac_meta$DPI>200 & pcoa_Ac_meta$DPI<280)& pcoa_Ac_meta$Treatment=="TMP_SMX"]
+
+
+wilcox.test(xx, yy, paired=T)
+```

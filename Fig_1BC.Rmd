@@ -1,0 +1,379 @@
+Opening packages
+```{r packages}
+rm(list=ls())
+setwd('~/Desktop/Projects/Project5_HV_Abx/20200513_Fig1_CP_nonorm')
+library(ggplot2)
+library(dplyr)
+```
+<br>
+
+**Load data**
+Input file: OTU based *.tax.summary file generated in mothur
+```{r data}
+table1 <- read.table('merged_Oh_output3_mostlySC.txt', sep="\t", header=T, stringsAsFactors=F)
+table <- table1
+colnames(table) <- gsub('(M\\w\\w\\d\\d\\d\\d).*', '\\1', colnames(table), ignore.case=T)
+table[is.na(table)] <- 0
+```
+
+**File reading and manipulation**
+```{r table opening and labeling fixing}
+table <- data.frame(table, stringsAsFactors=F)
+
+table2 <- table[, 2:ncol(table)]
+rownames(table2) <- table$taxa
+
+table2 <- table2[,as.numeric(table2[1,])>50000]
+table <- table2[rownames(table2)!='Totals',]
+
+metadata <- read.table(file="meta_data.txt", sep="\t", header=T, stringsAsFactors=F)
+metadata2 <- metadata[intersect(grep("Ac|Ra|Vf", metadata$Site), grep("HV", metadata$Treatment, invert=T)),]
+
+sel_list <- metadata2$Sample
+```
+
+**Calling Oh. et al. paper**
+```{r}
+HV_meta <- data.frame(read.csv(file="Ohetal_HVlong_meta.csv", sep=",", header=T, stringsAsFactors=F), stringsAsFactors=F)
+
+#Subjects to remove: HV08, HV10
+meta_new_HV <- data.frame(cbind(HV_meta$SAMPLE, gsub("(HV\\d*)_.*", "\\1", HV_meta$Designation), 
+                     HV_meta$Site.Symmetry, gsub("\\.", "/", HV_meta$Date.Collected)), stringsAsFactors=F)
+#meta_new_HV <- meta_new_HV[!(meta_new_HV$X1 %in% colnames(table_skin)),]
+meta_new_HV$Treatment <- "HV"
+colnames(meta_new_HV) <- colnames(metadata2)
+meta_new_HV <- meta_new_HV[grep("Ac|Ra|Vf", meta_new_HV$Site),]
+meta_new_HV <- meta_new_HV[meta_new_HV$Subject!="HV08" & meta_new_HV$Subject!="HV10",]
+
+sel_list2 <- meta_new_HV$Sample
+
+sel_list <- union(sel_list, sel_list2)
+
+table_skin <- table[,colnames(table) %in% sel_list]
+metadata2 <- metadata2[metadata2$Sample %in% colnames(table_skin),]
+```
+<br>
+
+
+**Skin**
+```{r}
+#Splitting table
+bacterial_skin <- table_skin[grep("Bacteria;", rownames(table_skin)),]
+fungal_skin <- table_skin[grep("Eukaryota;Fungi;", rownames(table_skin)),]
+viral_skin <- table_skin[grep("Viruses;", rownames(table_skin)),]
+others_skin <- table_skin[grep("Bacteria;|Eukaryota;Fungi;|Viruses;", rownames(table_skin), invert=TRUE),]
+
+#Skin_bacteria
+bacterial_skin$species <- gsub("(Bacteria;[^;]*;[^;]*;[^;]*;[^;]*;[^;]*;[^;_]*_[^;_]*).*", "\\1", rownames(bacterial_skin))
+bacterial_skin <- data.frame(bacterial_skin %>% group_by(species) %>% summarise_all(list(sum)))
+rownames(bacterial_skin) <- bacterial_skin$species
+bacterial_skin$species <- NULL
+
+#Skin_Virus
+viral_skin$species <- gsub("(Viruses;[^;]*;[^;]*;[^;]*;[^;]*;[^;]*;[^;_]*_[^;_]*).*", "\\1", rownames(viral_skin))
+viral_skin$species <- gsub("(Viruses;.*_phage).*", "\\1", viral_skin$species)
+viral_skin <- data.frame(viral_skin %>% group_by(species) %>% summarise_all(list(sum)))
+rownames(viral_skin) <- viral_skin$species
+viral_skin$species <- NULL
+
+#Skin_fungi
+fungal_skin$species <- gsub("(Eukaryota;Fungi;[^;]*;[^;]*;[^;]*;[^;]*;[^;]*;[^;_]*_[^;_]*).*", "\\1", rownames(fungal_skin))
+fungal_skin <- data.frame(fungal_skin %>% group_by(species) %>% summarise_all(list(sum)))
+rownames(fungal_skin) <- fungal_skin$species
+fungal_skin$species <- NULL
+
+#others and merge
+skin_merged <- rbind(bacterial_skin, viral_skin, fungal_skin, colSums(others_skin[,]))
+rownames(skin_merged)[nrow(skin_merged)] <- "Eukaryota;Others"
+
+#colSums(skin_merged)
+```
+
+
+**Function for converting table into ratio**
+```{r}
+ratio_table <- function(df){
+  return(data.frame(t(apply(df, 1, function(x){return(unlist(x/colSums(df)))})), stringsAsFactors=F))
+}
+```
+
+**Beta diversity calculation and pcoa**
+```{r}
+library(vegan)
+library(ape)
+
+table_skin2 <- ratio_table(table_skin)
+table_skin2[is.na(table_skin2)] <- 0
+table_skin2$taxa <- NULL
+table_skin2 <- table_skin2[rowSums(table_skin2)!=0,]
+#table_skin3 <- data.frame(t(table_skin2), stringsAsFactor=F)
+
+metadata <- rbind(metadata2, meta_new_HV)
+metadata <- metadata[metadata$Sample %in% colnames(table_skin2),]
+#metadata <- metadata[grep("WGA", metadata$Site),]
+
+pcoa_Ac_df <- data.frame(metadata[grep("Ac", metadata$Site), 1], stringsAsFactors=F)
+colnames(pcoa_Ac_df)[1] <- "Sample"
+rownames(pcoa_Ac_df) <- pcoa_Ac_df$Sample
+
+pcoa_Ra_df <- data.frame(metadata[grep("Ra", metadata$Site), 1], stringsAsFactors=F)
+colnames(pcoa_Ra_df)[1] <- "Sample"
+rownames(pcoa_Ra_df) <- pcoa_Ra_df$Sample
+
+pcoa_Vf_df <- data.frame(metadata[grep("Vf", metadata$Site), 1], stringsAsFactors=F)
+colnames(pcoa_Vf_df)[1] <- "Sample"
+rownames(pcoa_Vf_df) <- pcoa_Vf_df$Sample
+```
+
+** metadata addition **
+```{r}
+metadata_finder <- function(df, metadata){
+  Subject <- NULL
+  Site <- NULL
+  Date <- NULL
+  Treatment <- NULL
+  for (i in rownames(df)){
+    Subject <- append(Subject, metadata$Subject[grep(i, metadata$Sample)])
+    Site <- append(Site, metadata$Site[grep(i, metadata$Sample)])
+    Date <- append(Date, metadata$DateCollected[grep(i, metadata$Sample)])
+    Treatment <- append(Treatment, metadata$Treatment[grep(i, metadata$Sample)])
+  }
+  df$Subject <- Subject
+  df$Site <- Site
+  df$Treatment <- Treatment
+  df$Treatment <- factor(df$Treatment, levels=c('Doxy_20mg', 'Doxy_100mg', 'Cepha_500mg','TMP_SMX', 'HV'))
+  df$Coll_date <- as.Date(Date, "%m/%d/%y")
+  df$Sample_id <- rownames(df)
+  df <- df %>% arrange(Coll_date) %>% arrange(Subject)
+  return(df)
+}
+pcoa_Ac_df2 <- metadata_finder(pcoa_Ac_df, metadata)
+pcoa_Ra_df2 <- metadata_finder(pcoa_Ra_df, metadata)
+pcoa_Vf_df2 <- metadata_finder(pcoa_Vf_df, metadata)
+
+#pcoa_Ac_df2 <- pcoa_Ac_df2[!(pcoa_Ac_df2$Sample %in% c("MET0021","MET0064","MET0001","MET0102","MET0189","MET0160","MET0208", "MET0789", "MET0287")),]
+#pcoa_Ra_df2 <- pcoa_Ra_df2[!(pcoa_Ra_df2$Sample %in% c("MET0014", "MET0051", "MET0076", "MET0093", "MET0781", "MET0187", "MET0169")),]
+#pcoa_Vf_df2 <- pcoa_Vf_df2[!(pcoa_Vf_df2$Sample %in% c("MET0020", "MET0188", "MET0168", "MET0790", "MET0796")),]
+
+#Three timepoint merger
+threetp_merger <- function(pcoa_df){
+  pcoa_df_HV <- pcoa_df[pcoa_df$Treatment=="HV",]
+  aa <- data.frame(table(pcoa_df_HV$Subject), stringsAsFactors=F)
+  pcoa_df_HV_2tp <- pcoa_df_HV[pcoa_df_HV$Subject %in% as.character(aa$Var1[aa$Freq==2]),]
+  pcoa_df_HV_3tp <- pcoa_df_HV[pcoa_df_HV$Subject %in% as.character(aa$Var1[aa$Freq==3]),]
+  results1 <- rbind(pcoa_df_HV_3tp[(3*(1:(nrow(pcoa_df_HV_3tp)/3)))-2,],
+                    pcoa_df_HV_3tp[(3*(1:(nrow(pcoa_df_HV_3tp)/3)))-1,])
+  results2 <- rbind(pcoa_df_HV_3tp[(3*(1:(nrow(pcoa_df_HV_3tp)/3)))-1,],
+                    pcoa_df_HV_3tp[(3*(1:(nrow(pcoa_df_HV_3tp)/3))),])
+  results2$Subject <- gsub("(.*)", "\\1_2", results2$Subject)
+  results <- rbind(pcoa_df[pcoa_df$Treatment!="HV",], pcoa_df_HV_2tp, results1, results2)
+  results <- results %>% arrange(Coll_date) %>% arrange(Subject)
+  return(results)
+}
+
+#pcoa_Ac_df2 <- threetp_merger(pcoa_Ac_df2)
+#pcoa_Ra_df2 <- threetp_merger(pcoa_Ra_df2)
+#pcoa_Vf_df2 <- threetp_merger(pcoa_Vf_df2)
+###
+
+DPI_calculator <- function(pcoa){
+  ret_df <- NULL
+  for (k in levels(factor(pcoa$Treatment))){
+    sub_df <- pcoa[pcoa$Treatment==k,]
+    i <- 2
+    DPI <- 0
+    DPI_Sum <- 0
+    if (k=="HV"){
+      sub_df <- sub_df %>% arrange(desc(Coll_date)) %>% arrange(Subject)
+    }
+    while (i<=dim(sub_df)[1]){
+      if(sub_df$Subject[i]==sub_df$Subject[i-1]){
+        DPI_Sum <- DPI_Sum+(sub_df$Coll_date[i]-sub_df$Coll_date[i-1])
+        DPI <- append(DPI, DPI_Sum)
+        i<-i+1
+      } else {
+        DPI <- append(DPI, 0)
+        DPI_Sum <- 0
+        i<-i+1
+      }
+    }
+    if (k=="HV"){DPI <- -as.numeric(DPI)}
+    sub_df <- cbind(sub_df, as.numeric(DPI))
+    ret_df <- rbind(ret_df, sub_df)
+  }
+  colnames(ret_df)[ncol(ret_df)] <- 'DPI'
+  #ret_df <- ret_df %>% arrange(Coll_date) %>% arrange(Treatment) %>% arrange(Subject)
+  return(ret_df)
+}
+#pcoa <- pcoa_Ra_df2
+pcoa_Ac_df2 <- DPI_calculator(pcoa_Ac_df2)
+pcoa_Ra_df2 <- DPI_calculator(pcoa_Ra_df2)
+pcoa_Vf_df2 <- DPI_calculator(pcoa_Vf_df2)
+
+D1_finder <- function(pcoa2){
+  pcoa2$D1_sample <- "NULL"
+  for (k in 1:nrow(pcoa2)){
+    if (pcoa2$DPI[k]==0){
+      pcoa2$D1_sample[k] <- pcoa2$Sample_id[k]
+    }
+    else {
+      pcoa2$D1_sample[k] <- pcoa2$D1_sample[k-1]
+    }
+  }
+  return(pcoa2)
+}
+
+pcoa_Ac_df2 <- D1_finder(pcoa_Ac_df2)
+pcoa_Ra_df2 <- D1_finder(pcoa_Ra_df2)
+pcoa_Vf_df2 <- D1_finder(pcoa_Vf_df2)
+
+library(reshape2)
+
+jaccard_from_df <- function(df, original_df){
+  jac_df <- vegdist(data.frame(t(original_df), stringsAsFactors=F), method='bray')
+  jac_df <- melt(as.matrix(jac_df))
+  jac_value <- NULL
+  for (i in 1:nrow(df)){
+    jac_value <- append(jac_value,
+                        jac_df$value[jac_df$Var1 == df$Sample_id[i] & jac_df$Var2==df$D1_sample[i]])
+  }
+  df <- cbind(df, jac_value)
+  return(df)
+}
+
+theta_from_df <- function(df, original_df){
+  theta_value <- NULL
+  for (i in 1:nrow(df)){
+    theta_value <- append(theta_value,
+                          thetayc_calculator(cbind(as.numeric(original_df[[df$Sample_id[i]]]), 
+                                                   as.numeric(original_df[[df$D1_sample[i]]]))))
+  }
+  df <- cbind(df, theta_value)
+  return(df)
+}
+
+pcoa_Ac_df3 <- jaccard_from_df(pcoa_Ac_df2, table_skin2)
+pcoa_Ra_df3 <- jaccard_from_df(pcoa_Ra_df2, table_skin2)
+pcoa_Vf_df3 <- jaccard_from_df(pcoa_Vf_df2, table_skin2)
+```
+
+**redundant samples**
+```{r}
+pcoa_Ac_df3 <- subset(pcoa_Ac_df3, Sample!="MET0001" & Sample!="MET0176" & Sample!="MET0747")
+pcoa_Ra_df3 <- subset(pcoa_Ra_df3, Sample!="MET0174")
+pcoa_Vf_df3 <- subset(pcoa_Vf_df3, Sample!="MET0175" & Sample!="MET0320")
+```
+
+**Plotting Theta boxplot**
+```{r}
+library(scales)
+Ac_df_D14 <- subset(pcoa_Ac_df3, DPI > 10 & DPI < 18)
+Ac_df_D14$DPI_group <- rep('D14', nrow(Ac_df_D14))
+Ac_df_D28 <- rbind(subset(pcoa_Ac_df3, Treatment!='HV' & (DPI>25 & DPI<30)), 
+                   subset(pcoa_Ac_df3, Treatment=='HV' & (DPI>25 & DPI<40)))
+Ac_df_D28$DPI_group <- rep('D28', nrow(Ac_df_D28))
+Ac_df_D56 <- rbind(subset(pcoa_Ac_df3, Treatment!='HV' & (DPI>48 & DPI<64)), 
+                   subset(pcoa_Ac_df3, Treatment=='HV' & (DPI>=40 & DPI<64)))
+Ac_df_D56$DPI_group <- rep('D56', nrow(Ac_df_D56))
+Ac_df_D336 <- rbind(subset(pcoa_Ac_df3, Treatment!='HV' & (DPI>290)), 
+                   subset(pcoa_Ac_df3, Treatment=='HV' & (DPI>290)))
+Ac_df_D336$DPI_group <- rep('D336', nrow(Ac_df_D336))
+
+Ra_df_D14 <- subset(pcoa_Ra_df3, DPI > 10 & DPI < 18)
+Ra_df_D14$DPI_group <- rep('D14', nrow(Ra_df_D14))
+Ra_df_D28 <- rbind(subset(pcoa_Ra_df3, Treatment!='HV' & (DPI>25 & DPI<30)), 
+                   subset(pcoa_Ra_df3, Treatment=='HV' & (DPI>25 & DPI<40)))
+Ra_df_D28$DPI_group <- rep('D28', nrow(Ra_df_D28))
+Ra_df_D56 <- rbind(subset(pcoa_Ra_df3, Treatment!='HV' & (DPI>48 & DPI<64)), 
+                   subset(pcoa_Ra_df3, Treatment=='HV' & (DPI>=40 & DPI<64)))
+Ra_df_D56$DPI_group <- rep('D56', nrow(Ra_df_D56))
+Ra_df_D336 <- rbind(subset(pcoa_Ra_df3, Treatment!='HV' & (DPI>290)), 
+                   subset(pcoa_Ra_df3, Treatment=='HV' & (DPI>290)))
+Ra_df_D336$DPI_group <- rep('D336', nrow(Ra_df_D336))
+
+Vf_df_D14 <- subset(pcoa_Vf_df3, DPI > 10 & DPI < 18)
+Vf_df_D14$DPI_group <- rep('D14', nrow(Vf_df_D14))
+Vf_df_D28 <- rbind(subset(pcoa_Vf_df3, Treatment!='HV' & (DPI>25 & DPI<30)), 
+                   subset(pcoa_Vf_df3, Treatment=='HV' & (DPI>25 & DPI<40)))
+Vf_df_D28$DPI_group <- rep('D28', nrow(Vf_df_D28))
+Vf_df_D56 <- rbind(subset(pcoa_Vf_df3, Treatment!='HV' & (DPI>48 & DPI<64)), 
+                   subset(pcoa_Vf_df3, Treatment=='HV' & (DPI>=40 & DPI<64)))
+Vf_df_D56$DPI_group <- rep('D56', nrow(Vf_df_D56))
+Vf_df_D336 <- rbind(subset(pcoa_Vf_df3, Treatment!='HV' & (DPI>290)), 
+                   subset(pcoa_Vf_df3, Treatment=='HV' & (DPI>290)))
+Vf_df_D336$DPI_group <- rep('D336', nrow(Vf_df_D336))
+
+
+All <- rbind(Ac_df_D14, Ac_df_D28, Ac_df_D56, Ac_df_D336,
+             Ra_df_D14, Ra_df_D28, Ra_df_D56, Ra_df_D336,
+             Vf_df_D14, Vf_df_D28, Vf_df_D56, Vf_df_D336)
+
+All$Treatment <- factor(All$Treatment, levels=c('HV', 'Doxy_20mg', 'Doxy_100mg', 'Cepha_500mg', 'TMP_SMX'))
+All$DPI_group <- factor(All$DPI_group, levels=c('D14', 'D28', 'D56', 'D336'))
+All$Site <- gsub("(\\w\\w)-\\w", "\\1", All$Site)
+All$Site <- gsub(":WGA", "", All$Site)
+All$Site <- factor(All$Site, levels=c("Vf", "Ac", "Ra"))
+  
+library(RColorBrewer)
+pdf('boxplot_all_3.pdf', width=8, height=8, useDingbats=F)
+ggplot(All) +
+  geom_boxplot(aes(x=Treatment, color=Treatment, y=jac_value)) + 
+  geom_jitter(aes(x=Treatment, color=Treatment, y=jac_value), width=0.2) + 
+  scale_color_manual(values=c('grey4', brewer.pal(4, 'Set1')[c(3,1,4,2)])) +
+  theme_bw() + 
+  theme(axis.text.x=element_text(angle=45, hjust=1, vjust=1)) + 
+  scale_y_continuous(breaks=seq(0,0.75,0.25), limits=c(0,0.95)) + 
+#  ylim(c(0,1.1)) +
+  facet_wrap(Site~DPI_group)
+dev.off()
+
+#Ac D28
+wilcox.test()(Ac_df_D28$jac_value[Ac_df_D28$Treatment=='TMP_SMX'], Ac_df_D28$jac_value[Ac_df_D28$Treatment=='HV'])
+wilcox.test()(Ac_df_D28$jac_value[Ac_df_D28$Treatment=='Cepha_500mg'], Ac_df_D28$jac_value[Ac_df_D28$Treatment=='HV'])
+
+#Ra D28
+wilcox.test(Ra_df_D28$jac_value[Ra_df_D28$Treatment=='TMP_SMX'], Ra_df_D28$jac_value[Ra_df_D28$Treatment=='HV'])
+wilcox.test(Ra_df_D28$jac_value[Ra_df_D28$Treatment=='Cepha_500mg'], Ra_df_D28$jac_value[Ra_df_D28$Treatment=='HV'])
+
+#Vf D28
+wilcox.test(Vf_df_D28$jac_value[Vf_df_D28$Treatment=='TMP_SMX'], Vf_df_D28$jac_value[Vf_df_D28$Treatment=='HV'])
+wilcox.test(Vf_df_D28$jac_value[Vf_df_D28$Treatment=='Cepha_500mg'], Vf_df_D28$jac_value[Vf_df_D28$Treatment=='HV'])
+
+#Ac D56
+wilcox.test(Ac_df_D56$jac_value[Ac_df_D56$Treatment=='TMP_SMX'], Ac_df_D56$jac_value[Ac_df_D56$Treatment=='HV'])
+wilcox.test(Ac_df_D56$jac_value[Ac_df_D56$Treatment=='Cepha_500mg'], Ac_df_D56$jac_value[Ac_df_D56$Treatment=='HV'])
+wilcox.test(Ac_df_D56$jac_value[Ac_df_D56$Treatment=='Doxy_100mg'], Ac_df_D56$jac_value[Ac_df_D56$Treatment=='HV'])
+wilcox.test(Ac_df_D56$jac_value[Ac_df_D56$Treatment=='Doxy_20mg'], Ac_df_D56$jac_value[Ac_df_D56$Treatment=='HV'])
+
+#Ra D56
+wilcox.test(Ra_df_D56$jac_value[Ra_df_D56$Treatment=='TMP_SMX'], Ra_df_D56$jac_value[Ra_df_D56$Treatment=='HV'])
+wilcox.test(Ra_df_D56$jac_value[Ra_df_D56$Treatment=='Cepha_500mg'], Ra_df_D56$jac_value[Ra_df_D56$Treatment=='HV'])
+wilcox.test(Ra_df_D56$jac_value[Ra_df_D56$Treatment=='Doxy_100mg'], Ra_df_D56$jac_value[Ra_df_D56$Treatment=='HV'])
+wilcox.test(Ra_df_D56$jac_value[Ra_df_D56$Treatment=='Doxy_20mg'], Ra_df_D56$jac_value[Ra_df_D56$Treatment=='HV'])
+
+#Vf D56
+wilcox.test(Vf_df_D56$jac_value[Vf_df_D56$Treatment=='TMP_SMX'], Vf_df_D56$jac_value[Vf_df_D56$Treatment=='HV'])
+wilcox.test(Vf_df_D56$jac_value[Vf_df_D56$Treatment=='Cepha_500mg'], Vf_df_D56$jac_value[Vf_df_D56$Treatment=='HV'])
+wilcox.test(Vf_df_D56$jac_value[Vf_df_D56$Treatment=='Doxy_100mg'], Vf_df_D56$jac_value[Vf_df_D56$Treatment=='HV'])
+wilcox.test(Vf_df_D56$jac_value[Vf_df_D56$Treatment=='Doxy_20mg'], Vf_df_D56$jac_value[Vf_df_D56$Treatment=='HV'])
+
+#Ac D336
+wilcox.test(Ac_df_D336$jac_value[Ac_df_D336$Treatment=='TMP_SMX'], Ac_df_D336$jac_value[Ac_df_D336$Treatment=='HV'])
+wilcox.test(Ac_df_D336$jac_value[Ac_df_D336$Treatment=='Cepha_500mg'], Ac_df_D336$jac_value[Ac_df_D336$Treatment=='HV'])
+wilcox.test(Ac_df_D336$jac_value[Ac_df_D336$Treatment=='Doxy_100mg'], Ac_df_D336$jac_value[Ac_df_D336$Treatment=='HV'])
+wilcox.test(Ac_df_D336$jac_value[Ac_df_D336$Treatment=='Doxy_20mg'], Ac_df_D336$jac_value[Ac_df_D336$Treatment=='HV'])
+
+#Ra D336
+wilcox.test(Ra_df_D336$jac_value[Ra_df_D336$Treatment=='TMP_SMX'], Ra_df_D336$jac_value[Ra_df_D336$Treatment=='HV'])
+wilcox.test(Ra_df_D336$jac_value[Ra_df_D336$Treatment=='Cepha_500mg'], Ra_df_D336$jac_value[Ra_df_D336$Treatment=='HV'])
+wilcox.test(Ra_df_D336$jac_value[Ra_df_D336$Treatment=='Doxy_100mg'], Ra_df_D336$jac_value[Ra_df_D336$Treatment=='HV'])
+wilcox.test(Ra_df_D336$jac_value[Ra_df_D336$Treatment=='Doxy_20mg'], Ra_df_D336$jac_value[Ra_df_D336$Treatment=='HV'])
+
+#Vf D336
+wilcox.test(Vf_df_D336$jac_value[Vf_df_D336$Treatment=='TMP_SMX'], Vf_df_D336$jac_value[Vf_df_D336$Treatment=='HV'])
+wilcox.test(Vf_df_D336$jac_value[Vf_df_D336$Treatment=='Cepha_500mg'], Vf_df_D336$jac_value[Vf_df_D336$Treatment=='HV'])
+wilcox.test(Vf_df_D336$jac_value[Vf_df_D336$Treatment=='Doxy_100mg'], Vf_df_D336$jac_value[Vf_df_D336$Treatment=='HV'])
+wilcox.test(Vf_df_D336$jac_value[Vf_df_D336$Treatment=='Doxy_20mg'], Vf_df_D336$jac_value[Vf_df_D336$Treatment=='HV'])
+
+```
+
