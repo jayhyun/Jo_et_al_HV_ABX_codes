@@ -1,2 +1,4 @@
-# Jo_et_al_HV_ABX_codes
-R scripts used in paper entitled; Alterations of human skin microbiome after systemic antibiotics with expansion of antimicrobial resistance
+# R scripts used in the manuscript
+
+Alterations of human skin microbiome and expansion of antimicrobial resistance after systemic antibiotics
+Jay-Hyun Jo, Catriona P Harkins, Nicole H Schwardt, Jessica A Portillo, NISC Comparative Sequencing Program, Matthew D Zimmerman, Claire L Carter, Md Amir Hossen, Cody J Peer, Eric C Polley, Véronique Dartois, William D Figg, Niki M Moutsopoulos, Julia A Segre, Heidi H Kong
